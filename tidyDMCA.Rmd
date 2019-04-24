@@ -54,21 +54,23 @@ From the above, we can notice some obvious things to handle.
 
 * Many lines are from the same submission template.
 * Numbers are not so useful.
-* "_" in words are indication of italic that should be removed.
+* "__" in words are indication of italic that should be removed.
 * In general, stop words are not interesting.
-* Words like 'github.com' are too common for this specific corpus.
+* Words like 'github' are not related to requests.
 
 ```{r, dependson=tidy_sentences}
 # Apply stop words from tidytext package then customize
 data(stop_words)
-custom_stop_words = c('github.com', 'www.github.com', 'https', 'http')
+custom_stop_words = c('github.com', 'www.github.com',
+                      'https', 'http',
+                      'github', 'github\'s')
 for (w in custom_stop_words){
   stop_words <- add_row(stop_words, word = w)
 }
 
 tidy_words <- tidy_sentences %>%
   filter(!str_detect(sentence, '^\\*\\*')) %>% # remove lines from template
-  mutate(sentence = str_replace_all(sentence, '_', '')) %>% # remove all "_"
+  mutate(sentence = str_replace_all(sentence, '_', ' ')) %>% # remove all "_"
   unnest_tokens(word, sentence) %>% # by word
   filter(!str_detect(word, '\\d')) %>% # remove digit only "words"
   anti_join(stop_words) # remove stop words
@@ -100,7 +102,7 @@ library(ggplot2)
 ggplot(year_words, aes(n, fill = year)) +
   geom_histogram(show.legend = FALSE) +
   xlim(0, 20) +
-  facet_wrap(~year, ncol = 4, scales = "free_y")
+  facet_wrap(~year, ncol = 2, scales = "free_y")
 ```
 
 Plot term frequency to show Zipf's law.
@@ -116,11 +118,10 @@ ggplot(freq_by_rank, aes(rank, `term frequency`, color = year)) +
   scale_y_log10()
 ```
 
-TF-IDF can show what are the most specific requests in each year. These might be relatively lesser requests in fact. No jetbrains here in any year but it is one of the top frequent terms, probably because it's common every year.
+TF-IDF can show what are the most specific requests in each year. These are not the companies/owners. For example, jetbrains is one of the top frequent terms, but not shown here probably because it is too common among many different requests.
 
 ```{r, dependson=year_words}
 year_words %>%
-  filter(n > 10) %>%
   bind_tf_idf(word, year, n) %>%
   select(-total) %>%
   arrange(desc(tf_idf)) %>%
@@ -134,3 +135,8 @@ year_words %>%
   facet_wrap(~year, ncol = 2, scales = "free") +
   coord_flip()
 ```
+
+## Further Analysis
+
+* Perhaps URLs can be removed before segmentation.
+* Group data by owner (as extracted from doc_id).
