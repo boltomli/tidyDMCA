@@ -1,0 +1,136 @@
+---
+title: "Tidying Github DMCA Files"
+author: Song Li
+date: "`r Sys.Date()`"
+description: "Tidy GitHub DMCA texts in R."
+github-repo: boltomli/tidyDMCA
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+## GitHub DMCA Data Source
+
+Assume the GitHub received DMCA mails [repo](https://github.com/github/dmca) is cloned in folder `../dmca`.
+
+```{r}
+dmca_src <- '../dmca'
+```
+
+## Tidying the Texts
+
+List DMCA mails in each folder for a quick view. It's not necessary for the next steps, however.
+
+```{r, dependson=dmca_src}
+dmca_files = list.files(dmca_src, recursive=TRUE, pattern='*/*.md')
+head(dmca_files)
+```
+
+Read content of each mail into a data frame.
+
+```{r, dependson=dmca_src}
+library(readtext)
+dmca_docs <- readtext(paste0(dmca_src, '/*/*.md'))
+head(dmca_docs)
+```
+
+Tidy documents into sentences first.
+
+```{r, dependson=dmca_docs}
+library(dplyr)
+library(tidytext)
+library(stringr)
+
+tidy_sentences <- dmca_docs %>%
+  unnest_tokens(sentence, text, token='sentences') # by sentence
+head(tidy_sentences)
+```
+
+From the above, we can notice some obvious things to handle.
+
+* Many lines are from the same submission template.
+* Numbers are not so useful.
+* "_" in words are indication of italic that should be removed.
+* In general, stop words are not interesting.
+* Words like 'github.com' are too common for this specific corpus.
+
+```{r, dependson=tidy_sentences}
+# Apply stop words from tidytext package then customize
+data(stop_words)
+custom_stop_words = c('github.com', 'www.github.com', 'https', 'http')
+for (w in custom_stop_words){
+  stop_words <- add_row(stop_words, word = w)
+}
+
+tidy_words <- tidy_sentences %>%
+  filter(!str_detect(sentence, '^\\*\\*')) %>% # remove lines from template
+  mutate(sentence = str_replace_all(sentence, '_', '')) %>% # remove all "_"
+  unnest_tokens(word, sentence) %>% # by word
+  filter(!str_detect(word, '\\d')) %>% # remove digit only "words"
+  anti_join(stop_words) # remove stop words
+head(tidy_words)
+```
+
+## Samples Using the Tidy Texts
+
+Next we can play with the data. Group the data by year first.
+
+```{r, dependson=tidy_words}
+year_of_interest = c('2015', '2016', '2017', '2018')
+year_words <- tidy_words %>%
+  mutate(year = substr(doc_id, 0, 4)) %>%
+  filter(is.element(year, year_of_interest)) %>%
+  count(doc_id, word, year, sort=TRUE) %>%
+  ungroup()
+total_words <- year_words %>%
+  group_by(year) %>%
+  summarize(total = sum(n))
+year_words <- left_join(year_words, total_words)
+head(year_words)
+```
+
+Plot the words count. Seems so many words appear just once or very few. Sum of words increases by year.
+
+```{r, dependson=year_words}
+library(ggplot2)
+ggplot(year_words, aes(n, fill = year)) +
+  geom_histogram(show.legend = FALSE) +
+  xlim(0, 20) +
+  facet_wrap(~year, ncol = 4, scales = "free_y")
+```
+
+Plot term frequency to show Zipf's law.
+
+```{r, dependson=year_words}
+freq_by_rank <- year_words %>%
+  group_by(year) %>%
+  mutate(rank = row_number(),
+         `term frequency` = n/total)
+ggplot(freq_by_rank, aes(rank, `term frequency`, color = year)) +
+  geom_line(size = 1.1, alpha = 0.8, show.legend = FALSE) +
+  scale_x_log10() +
+  scale_y_log10()
+```
+
+TF-IDF can show what are the most specific requests in each year. These might be relatively lesser requests in fact. No jetbrains here in any year but it is one of the top frequent terms, probably because it's common every year.
+
+```{r, dependson=year_words}
+year_words %>%
+  filter(n > 10) %>%
+  bind_tf_idf(word, year, n) %>%
+  select(-total) %>%
+  arrange(desc(tf_idf)) %>%
+  mutate(word = factor(word, levels = rev(unique(word)))) %>%
+  group_by(year) %>%
+  top_n(10) %>%
+  ungroup() %>%
+  ggplot(aes(word, tf_idf, fill = year)) +
+  geom_col(show.legend = FALSE) +
+  labs(x = NULL, y = "tf-idf") +
+  facet_wrap(~year, ncol = 2, scales = "free") +
+  coord_flip()
+```
